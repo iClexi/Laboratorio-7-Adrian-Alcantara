@@ -1,0 +1,22 @@
+# Servidor NFS
+sudo apt update && sudo apt install -y nfs-kernel-server
+sudo mkdir -p /srv/nfs/OS3
+sudo chown nobody:nogroup /srv/nfs/OS3
+sudo chmod 755 /srv/nfs/OS3
+for i in {1..100}; do sudo touch "/srv/nfs/OS3/Adrian $i.txt"; done
+echo "/srv/nfs/OS3 10.0.0.201(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
+sudo exportfs -ra
+sudo systemctl restart nfs-kernel-server
+
+# Cliente NFS
+sudo apt update && sudo apt install -y nfs-common
+sudo mkdir -p /mnt/OS3
+sudo mount 10.0.0.200:/srv/nfs/OS3 /mnt/OS3
+echo "10.0.0.200:/srv/nfs/OS3 /mnt/OS3 nfs defaults 0 0" | sudo tee -a /etc/fstab
+sudo umount /mnt/OS3
+sudo mount -a
+
+# Verificación
+ls -1 /mnt/OS3
+sudo reboot
+ls -1 /mnt/OS3
