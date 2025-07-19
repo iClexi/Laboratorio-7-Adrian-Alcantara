@@ -1,0 +1,128 @@
+# ================================
+# 1) CONFIGURACIÓN SERVIDOR
+# ================================
+
+# Cambiar hostname a “dc”
+sudo hostnamectl set-hostname dc
+
+# Ajustar /etc/hosts para tu IP y FQDN
+sudo tee /etc/hosts <<EOF
+127.0.0.1    localhost
+10.0.0.200   dc.so3.inet dc
+EOF
+
+# Verificar FQDN y resolución
+hostname -f
+ping -c2 dc.so3.inet
+
+# Desactivar systemd‑resolved y liberar el puerto 53
+sudo systemctl disable --now systemd-resolved
+sudo unlink /etc/resolv.conf
+
+# Crear /etc/resolv.conf con tus DNS
+sudo tee /etc/resolv.conf <<EOF
+nameserver 10.0.0.200
+nameserver 8.8.8.8
+search so3.inet
+EOF
+
+# Hacer inmutable resolv.conf
+sudo chattr +i /etc/resolv.conf
+
+# ================================
+# 2) INSTALACIÓN DE SAMBA & DEPENDENCIAS
+# ================================
+sudo apt update
+sudo apt install -y \
+  acl attr \
+  samba samba-dsdb-modules samba-vfs-modules \
+  smbclient winbind libpam-winbind libnss-winbind libpam-krb5 \
+  krb5-config krb5-user dnsutils chrony net-tools
+
+# Detener y deshabilitar servicios que no usa AD‑DC
+sudo systemctl disable --now smbd nmbd winbind
+
+# Habilitar sólo el servicio AD‑DC
+sudo systemctl unmask samba-ad-dc
+sudo systemctl enable --now samba-ad-dc
+
+# ================================
+# 3) PROVISIONAR SAMBA AD DC
+# ================================
+
+# Hacer backup de smb.conf por si acaso
+sudo mv /etc/samba/smb.conf /etc/samba/smb.conf.orig
+
+
+sudo samba-tool domain provision \
+  --realm=SO3.INET \
+  --domain=SO3 \
+  --server-role=dc \
+  --dns-backend=SAMBA_INTERNAL \
+  --dns-forwarder=8.8.8.8 \
+  --adminpass='Michael123'
+
+# Backup y reemplazo de krb5.conf
+sudo mv /etc/krb5.conf /etc/krb5.conf.orig
+sudo cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+
+# Reiniciar y comprobar servicio AD‑DC
+sudo systemctl restart samba-ad-dc
+sudo systemctl status samba-ad-dc
+
+# ================================
+# 4) CONFIGURACIÓN DE NTP (chrony)
+# ================================
+sudo chown root:_chrony /var/lib/samba/ntp_signd/
+sudo chmod 750      /var/lib/samba/ntp_signd/
+
+# Añade al final de /etc/chrony/chrony.conf:
+sudo tee -a /etc/chrony/chrony.conf <<EOF
+
+# Samba AD‑DC NTP
+bindcmdaddress 10.0.0.200
+allow        10.0.0.0/24
+ntpsigndsocket /var/lib/samba/ntp_signd
+EOF
+
+sudo systemctl restart chronyd
+sudo systemctl status chronyd
+
+# ================================
+# 5) VERIFICACIONES BÁSICAS
+# ================================
+host -t A dc.so3.inet
+host -t A so3.inet
+
+host -t SRV _kerberos._udp.so3.inet
+host -t SRV _ldap._tcp.so3.inet
+
+smbclient -L so3.inet -N
+
+kinit administrator@SO3.INET
+klist
+
+sudo smbclient //localhost/netlogon -U 'administrator'
+sudo samba-tool user setpassword administrator
+
+testparm
+sudo samba-tool domain level show
+
+# ================================
+# 6) CREAR EL USUARIO “lanegracubana”
+# ================================
+
+sudo samba-tool user create lanegracubana Michael20250845 --login-shell=/bin/bash
+
+# Otros comandos útiles de usuario/grupo:
+sudo samba-tool user list
+sudo samba-tool user delete <usuario>
+
+sudo samba-tool computer list
+sudo samba-tool computer delete <equipo>
+
+sudo samba-tool group add <grupo>
+sudo samba-tool group list
+samba-tool group listmembers 'Domain Admins'
+sudo samba-tool group addmembers <grupo> <usuario>
+sudo samba-tool group removemembers <grupo> <usuario>
