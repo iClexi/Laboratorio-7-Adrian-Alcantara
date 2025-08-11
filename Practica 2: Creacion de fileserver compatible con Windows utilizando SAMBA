@@ -1,43 +1,50 @@
-# 1. Actualizar repos e instalar Samba y módulos
+# 1) Instalar Samba y módulos
 sudo apt update && sudo apt install -y samba samba-dsdb-modules samba-vfs-modules krb5-user krb5-config krb5-kdc krb5-admin-server dnsutils
 
-# 2. Habilitar y arrancar los servicios de Samba
+# 2) Habilitar e iniciar servicios Samba clásico
 sudo systemctl enable --now smbd nmbd
 
-# 3. Crear grupo, carpeta compartida y ajustar permisos
+# 3) Grupo, carpeta y permisos (SetGID para heredar grupo)
 sudo groupadd sambashare
 sudo mkdir -p /srv/samba/adrian
 sudo chown root:sambashare /srv/samba/adrian
-sudo chmod 2775 /srv/samba/adrian        # SetGID + rwxrwsr-x
+sudo chmod 2775 /srv/samba/adrian
 
-# 4. Crear usuario Samba sin shell, asignarle home en la carpeta y añadirlo al grupo
+# 4) Usuario Samba (sin shell), agregar al grupo y crear clave de Samba
 sudo useradd -M -d /srv/samba/adrian -s /usr/sbin/nologin adrian
-sudo smbpasswd -a adrian                 # Te pedirá contraseña Samba
 sudo usermod -aG sambashare adrian
+sudo smbpasswd -a adrian       # ponle la clave que usarás desde Windows
 
-# 5. Configurar el recurso en smb.conf
-sudo tee -a /etc/samba/smb.conf > /dev/null << 'EOF'
-[global]
-   workgroup = WORKGROUP
-   security = user
-   map to guest = Bad User
+# 5) Configurar el recurso compartido
+sudo nano /etc/samba/smb.conf
+# Deja así (reemplaza todo si hace falta):
+# ----------------------------------------
+# [global]
+#    workgroup = WORKGROUP
+#    security = user
+#    map to guest = Bad User
+#
+# [adrian]
+#    path = /srv/samba/adrian
+#    browsable = yes
+#    writable = yes
+#    valid users = @sambashare
+#    create mask = 0664
+#    directory mask = 0775
+# ----------------------------------------
+# Guardar: CTRL+O, ENTER. Salir: CTRL+X
 
-[adrian]
-   path = /srv/samba/adrian
-   browsable = yes
-   writable = yes
-   valid users = @sambashare
-   create mask = 0664
-   directory mask = 0775
-EOF
-
-# 6. Reiniciar servicios para aplicar cambios
+# 6) Probar sintaxis y reiniciar
+testparm
 sudo systemctl restart smbd nmbd
 
-# 7. Crear los 100 archivos adrian1…adrian100 con touch y brace expansion
+# 7) Crear 100 archivos de prueba
 cd /srv/samba/adrian
 sudo touch adrian{1..100}
 
-# 8. Validar que adrian99 contiene la frase modificada
-# (tras editar desde Windows y guardar en Z:\adrian99)
+# 8) (Desde Windows) Conectar a \\IP_DEL_SERVIDOR\adrian
+#    Usuario: adrian  |  Clave: (la de smbpasswd)
+#    Edita y guarda el archivo adrian99 con una frase.
 
+# 9) Verificar desde Linux que se grabó el cambio
+sudo grep -n '' /srv/samba/adrian/adrian99 || sudo ls -l /srv/samba/adrian/adrian99
