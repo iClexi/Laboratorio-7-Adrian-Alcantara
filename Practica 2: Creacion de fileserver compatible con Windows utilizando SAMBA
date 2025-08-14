@@ -21,12 +21,9 @@ sudo smbpasswd -a adrian       # ponle la clave que usarás desde Windows
 
 # 5) Configurar el recurso compartido
 sudo nano /etc/samba/smb.conf
-# Deja así (reemplaza todo si hace falta):
+# ANADE AL FINAL:
 # ----------------------------------------
-# [global]
-#    workgroup = WORKGROUP
-#    security = user
-#    map to guest = Bad User
+
 #
 # [adrian]
 #    path = /srv/samba/adrian
