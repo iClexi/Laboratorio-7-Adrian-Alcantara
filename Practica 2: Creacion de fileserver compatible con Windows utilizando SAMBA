@@ -1,11 +1,15 @@
 # 1) Instalar Samba y módulos
 sudo apt update && sudo apt install -y samba samba-dsdb-modules samba-vfs-modules krb5-user krb5-config krb5-kdc krb5-admin-server dnsutils
 
+#EN PANTALLA MORADA DE KERBERO
+Poner Hostname siempre que lo pida
+
 # 2) Habilitar e iniciar servicios Samba clásico
 sudo systemctl enable --now smbd nmbd
 
 # 3) Grupo, carpeta y permisos (SetGID para heredar grupo)
 sudo groupadd sambashare
+
 sudo mkdir -p /srv/samba/adrian
 sudo chown root:sambashare /srv/samba/adrian
 sudo chmod 2775 /srv/samba/adrian
