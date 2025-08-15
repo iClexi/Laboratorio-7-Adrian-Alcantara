@@ -2,6 +2,13 @@
 # 1) CONFIGURACIÓN DEL SERVIDOR UBUNTU PARA SAMBA AD DC
 # ===========================================
 
+#INVESTIGAR SI HAY UNA IP EN USO, SAMBA SE VUELVE LOCO
+grep -R "10.0.0.102" /etc
+
+
+#Parar Keepalived
+sudo systemctl stop keepalived
+
 # Cambiar el nombre del host a "dc"
 sudo hostnamectl set-hostname dc
 
@@ -37,6 +44,9 @@ sudo apt update
 sudo apt install -y acl attr samba samba-dsdb-modules samba-vfs-modules \
 smbclient winbind libpam-winbind libnss-winbind libpam-krb5 \
 krb5-config krb5-user dnsutils chrony net-tools
+
+#EN PANTALLA MORADA DE KERBEROS
+Poner so3.inet
 
 # Deshabilitar servicios de Samba que no se usan en AD DC
 sudo systemctl disable --now smbd nmbd winbind
@@ -103,7 +113,8 @@ smbclient -L so3.inet -N
 
 # Autenticarse en Kerberos con el usuario administrador del dominio
 kinit administrator@SO3.INET
-klist  # Ver ticket Kerberos
+# Ver ticket Kerberos
+klist
 
 # Probar acceso a la carpeta netlogon
 sudo smbclient //localhost/netlogon -U 'administrator'
@@ -133,3 +144,142 @@ sudo samba-tool group removemembers <grupo> <usuario>
 # Listar y eliminar equipos unidos al dominio
 sudo samba-tool computer list
 sudo samba-tool computer delete <equipo>
+
+#TROUBLESHOOT WINDOWS
+# Troubleshooting unión de Windows a Samba AD DC
+
+Este documento describe los pasos completos de diagnóstico, solución de problemas y configuración 
+para unir un cliente Windows a un dominio Active Directory controlado por Samba AD DC.
+
+---
+
+## 1. Configuración de red y DNS en Windows
+
+### Configurar IP estática y DNS
+1. Ir a **Panel de control → Red e Internet → Centro de redes y recursos compartidos → Cambiar configuración del adaptador**.
+2. Botón derecho sobre el adaptador activo → **Propiedades**.
+3. Seleccionar **Protocolo de Internet versión 4 (TCP/IPv4)** → **Propiedades**.
+4. Marcar **Usar la siguiente dirección IP**:
+   - Dirección IP: (la que desees para el cliente)
+   - Máscara de subred: dejar la que Windows coloque por defecto (ej. 255.255.255.0)
+   - Puerta de enlace predeterminada: **IP del servidor Samba** (ej. 10.0.0.151)
+5. Marcar **Usar las siguientes direcciones de servidor DNS**:
+   - Servidor DNS preferido: **IP del servidor Samba** (ej. 10.0.0.151)
+   - Servidor DNS alternativo: vacío o 8.8.8.8 (opcional)
+
+---
+
+## 2. Desactivar IPv6 (opcional pero recomendado para pruebas)
+En PowerShell (Administrador):
+
+```powershell
+# Borrar cualquier DNS IPv6 configurado
+Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -AddressFamily IPv6 -ResetServerAddresses
+
+# Desactivar IPv6 en el adaptador temporalmente
+Disable-NetAdapterBinding -Name "Ethernet" -ComponentID ms_tcpip6
+```
+
+---
+
+## 3. Limpiar caché DNS y probar resolución
+
+```powershell
+ipconfig /flushdns
+nslookup so3.inet 10.0.0.151
+nslookup dc.so3.inet 10.0.0.151
+```
+
+Esperado: Ambas deben devolver la IPv4 del DC.
+
+---
+
+## 4. Verificar puertos abiertos desde Windows
+
+```powershell
+Test-NetConnection 10.0.0.151 -Port 53    # DNS
+Test-NetConnection 10.0.0.151 -Port 88    # Kerberos
+Test-NetConnection 10.0.0.151 -Port 389   # LDAP
+Test-NetConnection 10.0.0.151 -Port 445   # SMB
+Test-NetConnection 10.0.0.151 -Port 135   # RPC
+```
+
+Si alguno falla, revisar firewall en Linux o en la red.
+
+---
+
+## 5. Validar registros SRV en el DC (Linux)
+
+En el servidor Samba:
+```bash
+dig @10.0.0.151 _ldap._tcp.so3.inet SRV
+dig @10.0.0.151 _kerberos._udp.so3.inet SRV
+```
+Esperado: Deben apuntar a `dc.so3.inet` con la IP correcta.
+
+---
+
+## 6. Probar descubrimiento del DC desde Windows
+
+```powershell
+nltest /dsgetdc:so3.inet
+```
+
+Si falla, revisar DNS y conectividad.
+
+---
+
+## 7. Unirse al dominio
+
+En Windows:
+1. Ir a **Configuración → Cuentas → Acceder a trabajo o escuela → Conectar → Unirse a este dispositivo a un dominio local**.
+2. Nombre de dominio: `so3.inet` o `SO3` (NetBIOS).
+3. Usuario: `SO3\administrator` o `administrator@SO3.INET`.
+4. Contraseña: la configurada en `samba-tool domain provision`.
+
+---
+
+## 8. Posibles errores y soluciones
+
+- **No se encuentra el dominio**:  
+  - Verificar que DNS preferido apunte al DC.
+  - Revisar conectividad a puertos 53, 88, 389, 445, 135.
+  - Validar registros SRV y A en Samba.
+
+- **Windows usa IPv6 primero**:  
+  - Desactivar IPv6 en el adaptador o borrar registros AAAA en Samba:
+    ```bash
+    samba-tool dns delete 127.0.0.1 so3.inet dc AAAA <IPv6>
+    samba-tool dns delete 127.0.0.1 so3.inet @ AAAA <IPv6>
+    ```
+
+- **Credenciales inválidas**:  
+  - Confirmar usuario y contraseña correctos en Samba.
+  - Probar autenticación desde Linux:
+    ```bash
+    kinit administrator@SO3.INET
+    ```
+
+- **El reloj del cliente y el DC no coinciden**:  
+  - Configurar NTP en Windows apuntando al DC:
+    ```powershell
+    w32tm /config /manualpeerlist:"10.0.0.151" /syncfromflags:manual /update
+    w32tm /resync
+    ```
+
+---
+
+## 9. Crear usuario de dominio
+
+En el servidor Samba:
+```bash
+sudo samba-tool user create michael 'ClaveFuerte123!'
+sudo samba-tool group addmembers "Domain Admins" michael
+```
+
+Luego iniciar sesión en Windows con:
+```
+SO3\michael
+```
+
+---
